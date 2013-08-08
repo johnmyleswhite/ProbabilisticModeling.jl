@@ -7,67 +7,108 @@ type ConditionalSpecification
 	parameters::Vector # Parameters as constants or symbols
 end
 
-function parse_model(ex::Expr)
-	variables = Array(Symbol, 0)
-	dependencies = Array(Vector{Symbol}, 0)
-	conditionals = Dict{Symbol, ConditionalSpecification}()
+isblock(ex::Expr) = ex.head == :block
+iscall(ex::Expr) = ex.head == :call
+isforloop(ex::Expr) = ex.head == :for && ex.args[1].head == :(=)
+isconditional(ex::Expr) == iscall(ex) && ex.args[1] != :~
 
-	if ex.head != :block
+function blocklines(ex::Expr)
+	if !isblock(ex)
+		error("Input is not a block")
+	end
+	return ex.args
+end
+
+function parse_conditional!(ex::Expr,
+	                        vars::Vector,
+	                        dependencies::Vector,
+	                        nodes::Dict)
+	if !isconditional(ex)
+		error("Input is not a conditional")
+	end
+
+	varname, distspec = ex.args[2], ex.args[3]
+
+	distname, params = distspec.args[1], distspec.args[2:end]
+
+	# TODO: Remove this
+	push!(vars, varname)
+
+	for param in params
+		if isa(param, Symbol)
+			push!(dependencies, [varname, param])
+		end
+	end
+
+	nodes[varname] = ConditionalSpecification(distname, params)
+
+	return
+end
+
+function forloopbounds(ex::Expr)
+	ex.args[2].args[1].args[2].args[1], ex.args[2].args[1].args[2].args[2]
+end
+
+function parse_forloop!(ex::Expr,
+	                    vars::Vector,
+	                    dependencies::Vector,
+	                    nodes::Dict)
+
+	if !isforloop(ex)
+		error("Invalid for loop")
+	end
+
+	# Extract variable name and distribution from body of loop
+	vname = ex.args[2].args[2].args[2].args[1]
+	vdistspec = ex.args[2].args[2].args[3]
+	dname = vdistspec.args[1]
+	params = vdistspec.args[2:end]
+
+	lower, upper = forloopbounds(ex)
+
+	for index in lower:upper
+		# Add variable
+		new_vname = symbol(string(string(vname), index))
+		push!(vars, new_vname)
+		for param in params
+			if isa(param, Symbol)
+				push!(dependencies, [new_vname, param])
+			end
+		end
+		nodes[new_vname] = ConditionalSpecification(dname, params)
+	end
+
+	return
+end
+
+function parse_model(ex::Expr)
+	vars = Array(Symbol, 0) # TODO: Remove this?
+	dependencies = Array(Vector{Symbol}, 0)
+	nodes = Dict{Symbol, ConditionalSpecification}()
+
+	if !isblock(ex)
 		error("Invalid model specification")
 	end
 
-	for inner_ex in ex.args
-		if inner_ex.head != :call && inner_ex.head != :for
-			continue
-		end
-
-		if inner_ex.head == :call
-			if inner_ex.args[1] != :~
+	# inner_ex => line
+	for line in blocklines(ex)
+		# Only process function calls and for loops
+		if iscall(line)
+			# TODO: Implement deterministic assignments
+			if isconditional(line)
+				parse_conditional!(line, vars, dependencies, nodes)
+			else
 				error("Invalid conditional distribution")
 			end
-
-			vname = inner_ex.args[2]
-			vdistspec = inner_ex.args[3]
-			dname = vdistspec.args[1]
-			params = vdistspec.args[2:end]
-
-			push!(variables, vname)
-
-			for param in params
-				if isa(param, Symbol)
-					push!(dependencies, [vname, param])
-				end
-			end
-
-			conditionals[vname] =
-			  ConditionalSpecification(dname, params)
+		elseif isforloop(line)
+			parse_forloop!(line, vars, dependencies, nodes)
 		else
-			if inner_ex.args[1].head != :(=)
-				error("Invalid for loop")
-			end
-
-			# Extract variable name and distribution from body of loop
-			vname = inner_ex.args[2].args[2].args[2].args[1]
-			vdistspec = inner_ex.args[2].args[2].args[3]
-			dname = vdistspec.args[1]
-			params = vdistspec.args[2:end]
-
-			for index in 1:inner_ex.args[1].args[2].args[2]
-				# Add variable
-				new_vname = symbol(string(string(vname), index))
-				push!(variables, new_vname)
-				for param in params
-					if isa(param, Symbol)
-						push!(dependencies, [new_vname, param])
-					end
-				end
-				conditionals[new_vname] =
-				  ConditionalSpecification(dname, params)
-			end
+			continue
+			# error("Invalid expression encountered")
 		end
 	end
 
-	return variables, dependencies, conditionals
+	return vars, dependencies, nodes
 end
 
 # (1) Integer => Variables
@@ -105,9 +146,9 @@ function build_indices(variables::Vector,
 end
 
 macro generate_sampler(model)
-	variables,
+	vars,
 	dependencies,
-	conditionals = parse_model(model)
+	nodes = parse_model(model)
 
 	index,
 	inverse_index = build_indices(variables,
@@ -119,7 +160,7 @@ macro generate_sampler(model)
 
     for i in 1:N
         vname = index[i]
-        distr = conditionals[vname]
+        distr = nodes[vname]
         params = Array(Any, length(distr.parameters))
         for j in 1:length(params)
             v = distr.parameters[j]
