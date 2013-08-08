@@ -10,7 +10,7 @@ end
 isblock(ex::Expr) = ex.head == :block
 iscall(ex::Expr) = ex.head == :call
 isforloop(ex::Expr) = ex.head == :for && ex.args[1].head == :(=)
-isconditional(ex::Expr) == iscall(ex) && ex.args[1] != :~
+isconditional(ex::Expr) = iscall(ex) && ex.args[1] != :(~)
 
 function blocklines(ex::Expr)
 	if !isblock(ex)
