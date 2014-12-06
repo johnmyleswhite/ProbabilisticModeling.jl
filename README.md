@@ -1,6 +1,10 @@
 ProbabilisticModeling.jl
 ========================
 
+# NOTICE
+
+**This package is unmaintained. Its reliability is not guaranteed.**
+
 # Introduction
 
 This package will eventually offer a DSL for probabilistic modeling that's built around Julia. Inspired by probabilistic programming languages like BUGS, the DSL supported by this package will allow users to articulate mathematical models in a purely descriptive fashion. The macros provided by this package will parse the model and generate code for a simple sampler that returns a DataFrame in which rows correspond to independent samples and columns correspond to independent columns.
